@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>展品点交与交接链追踪</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1f2329; }
+  header { background: #1f3a5f; color: #fff; padding: 16px 24px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header p { margin: 0; font-size: 13px; opacity: .85; }
+  main { max-width: 1080px; margin: 0 auto; padding: 16px 24px 48px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0; }
+  button { background: #1f3a5f; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
+  button:hover { background: #2a4f7f; }
+  button.ghost { background: #e4e7eb; color: #1f2329; }
+  select, input { padding: 7px 8px; border: 1px solid #c8ccd2; border-radius: 6px; font-size: 14px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
+  .card { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 10px 12px; }
+  .card .num { font-size: 24px; font-weight: 700; }
+  .card .lbl { font-size: 12px; color: #6a737d; }
+  .card.bad .num { color: #c0392b; }
+  .card.good .num { color: #1e8449; }
+  section.panel { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 14px 16px; margin: 14px 0; }
+  section.panel h2 { margin: 0 0 10px; font-size: 15px; }
+  #result { border-left: 4px solid #1f3a5f; min-height: 60px; }
+  #result .placeholder { color: #8a9199; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid #e1e4e8; padding: 6px 8px; text-align: left; }
+  th { background: #f0f2f5; }
+  .tag { display: inline-block; border-radius: 4px; padding: 1px 6px; font-size: 12px; margin-right: 4px; }
+  .tag.late { background: #fdf0d5; color: #9c6a00; }
+  .tag.hall { background: #e3ecfa; color: #1f3a5f; }
+  .tag.transport { background: #e6f4ea; color: #1e6b3a; }
+  .problem { color: #c0392b; font-size: 13px; margin: 4px 0; }
+  .ok { color: #1e8449; font-size: 13px; }
+  ol.chain { margin: 6px 0; padding-left: 20px; font-size: 13px; }
+  ol.chain li { margin: 4px 0; }
+  pre { background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 10px; font-size: 12px; overflow: auto; max-height: 260px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  .muted { color: #6a737d; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>展品点交与交接链追踪（展馆 × 运输）</h1>
+  <p>双侧采集 · 按发生时间重放全部单据（不只取最后一条）· 箱换编号可回溯原箱 · 支持部分转交与补交早到记录</p>
+</header>
+<main>
+  <div class="toolbar">
+    <button id="btn-collect">采集两边交接单</button>
+    <button id="btn-late">补交早到记录</button>
+    <select id="object-select" title="选择物件"></select>
+    <button id="btn-chain">打开物件交接链</button>
+    <input id="box-input" value="BOX-100" title="箱号（可填历史编号）">
+    <button id="btn-box" class="ghost">箱位置报告</button>
+    <button id="btn-reset" class="ghost">重置样例</button>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <section class="panel" id="result" data-evidence-result aria-live="polite">
+    <span class="placeholder">尚未操作。请先点击「采集两边交接单」。</span>
+  </section>
+
+  <div class="grid2">
+    <section class="panel">
+      <h2>物件状态</h2>
+      <table id="objects-table"><thead><tr><th>编号</th><th>名称</th><th>状态</th><th>经手次数</th></tr></thead><tbody></tbody></table>
+    </section>
+    <section class="panel">
+      <h2>箱与编号</h2>
+      <table id="boxes-table"><thead><tr><th>规范箱号</th><th>历史编号</th><th>状态</th><th>持有方</th><th>箱内物件</th></tr></thead><tbody></tbody></table>
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>事件流水（按发生时间排序，重放全部单据得出状态）</h2>
+    <table id="events-table"><thead><tr><th>时间(UTC)</th><th>单号</th><th>类型</th><th>来源</th><th>箱号</th><th>交接</th><th>标记</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <section class="panel">
+    <h2>校验问题</h2>
+    <div id="problems"><span class="muted">暂无</span></div>
+  </section>
+</main>
+<script>
+const $ = (sel) => document.querySelector(sel);
+const fmtT = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(path, method = 'GET') {
+  const r = await fetch(path, { method });
+  const body = await r.json();
+  if (!r.ok) throw Object.assign(new Error(body.error || r.statusText), { body, status: r.status });
+  return body;
+}
+
+function renderResult(html, raw) {
+  $('#result').innerHTML = html + (raw ? '<pre>' + esc(JSON.stringify(raw, null, 2)) + '</pre>' : '');
+}
+
+function renderState(state) {
+  const s = state.stats;
+  $('#cards').innerHTML = [
+    ['物件', s.objects, ''], ['箱', s.boxes, ''], ['已收单据', s.events, ''],
+    ['重复交单', s.duplicates, s.duplicates ? 'bad' : ''],
+    ['拒收', s.rejected, s.rejected ? 'bad' : ''],
+    ['校验问题', s.problems, s.problems ? 'bad' : 'good'],
+  ].map(([lbl, num, cls]) => `<div class="card ${cls}"><div class="num">${num}</div><div class="lbl">${lbl}</div></div>`).join('');
+
+  $('#objects-table tbody').innerHTML = state.objects.map((o) =>
+    `<tr><td>${esc(o.id)}</td><td>${esc(o.name)}</td><td>${esc(o.status)}</td><td>${o.hops}</td></tr>`).join('');
+
+  $('#boxes-table tbody').innerHTML = state.boxes.map((b) =>
+    `<tr><td>${esc(b.id)}</td><td>${b.labels.map(esc).join(' → ')}</td><td>${b.status === 'opened' ? '已开箱' : '在途/封存'}</td><td>${esc(b.holder || '-')}</td><td>${b.contents.map(esc).join(', ') || '（空）'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">暂无</td></tr>';
+
+  $('#events-table tbody').innerHTML = state.events.map((e) =>
+    `<tr><td>${fmtT(e.at)}</td><td>${esc(e.slipId)}</td><td>${esc(e.kindLabel)}</td>` +
+    `<td><span class="tag ${e.side}">${e.side === 'hall' ? '展馆' : '运输'}</span></td>` +
+    `<td>${esc(e.boxLabel)}${e.renumberTo ? ' → ' + esc(e.renumberTo) : ''}${e.targetBox ? ' ⇒ ' + esc(e.targetBox) : ''}</td>` +
+    `<td>${esc(e.from || '')} → ${esc(e.to || '')}</td>` +
+    `<td>${e.late ? '<span class="tag late">补录</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">暂无</td></tr>';
+
+  $('#problems').innerHTML = state.problems.length
+    ? state.problems.map((p) => `<div class="problem">⚠ [${esc(p.code)}] ${esc(p.message)}</div>`).join('')
+    : '<span class="ok">✔ 交接链完整，校验通过</span>';
+
+  const sel = $('#object-select');
+  if (!sel.options.length) {
+    sel.innerHTML = state.objects.map((o) => `<option value="${esc(o.id)}">${esc(o.id)} ${esc(o.name)}</option>`).join('');
+  }
+}
+
+async function refresh() { renderState(await api('/api/state')); }
+
+$('#btn-collect').onclick = async () => {
+  const r = await api('/api/collect', 'POST');
+  renderState(r.state);
+  renderResult(
+    `<h2>采集两边交接单</h2>` +
+    `<p>展馆侧：新收 ${r.hall.accepted} 条 / 重复 ${r.hall.duplicates} 条；运输侧：新收 ${r.transport.accepted} 条 / 重复 ${r.transport.duplicates} 条。</p>` +
+    `<p>合计新收 <b>${r.totals.accepted}</b> 条，去重 <b>${r.totals.duplicates}</b> 条（重复单号不再生效），当前校验问题 <b>${r.state.stats.problems}</b> 条。</p>`,
+    { totals: r.totals, duplicates: r.state.duplicates, problems: r.state.problems });
+};
+
+$('#btn-late').onclick = async () => {
+  const r = await api('/api/late', 'POST');
+  renderState(r.state);
+  const d = r.result;
+  renderResult(
+    `<h2>补交早到记录</h2>` +
+    `<p>单号 ${esc(d.slipId)}：${d.status === 'accepted' ? '已受理（发生时间早于既有签收记录，已按时间插回交接链）' : d.status === 'duplicate' ? '重复补交，已忽略' : '被拒收：' + esc(d.reason)}。</p>` +
+    `<p>当前校验问题 <b>${r.state.stats.problems}</b> 条。</p>`,
+    { result: d, problems: r.state.problems });
+};
+
+$('#btn-chain').onclick = async () => {
+  const id = $('#object-select').value;
+  try {
+    const r = await api('/api/chain?object=' + encodeURIComponent(id));
+    renderResult(
+      `<h2>物件交接链：${esc(r.id)} ${esc(r.name)}</h2><p>当前状态：<b>${esc(r.status)}</b>（共 ${r.hops} 次经手）</p>` +
+      (r.chain.length ? '<ol class="chain">' + r.chain.map((c) =>
+        `<li>${fmtT(c.at)} 【${esc(c.kindLabel)}】箱 ${esc(c.box)}${c.renumberTo ? '（换编号→' + esc(c.renumberTo) + '）' : ''}${c.targetBox ? '（分出→' + esc(c.targetBox) + '）' : ''}，` +
+        `${esc(c.from || '')} → ${esc(c.to || '')}，单号 ${esc(c.slipId)}${c.late ? ' <span class="tag late">补录</span>' : ''}</li>`).join('') + '</ol>' : '<p class="muted">暂无交接记录</p>'),
+      r);
+  } catch (e) { renderResult(`<h2>物件交接链</h2><p class="problem">查询失败：${esc(e.message)}</p>`, e.body); }
+};
+
+$('#btn-box').onclick = async () => {
+  const label = $('#box-input').value.trim();
+  try {
+    const r = await api('/api/box?label=' + encodeURIComponent(label));
+    renderResult(
+      `<h2>箱位置报告：${esc(label)}</h2>` +
+      `<p>规范箱号 <b>${esc(r.canonical)}</b>（历史编号：${r.labels.map(esc).join(' → ')}），状态：${r.status === 'opened' ? '已开箱' : '在途/封存'}，持有方：${esc(r.holder || '-')}，箱内：${r.contents.map(esc).join(', ') || '（空）'}</p>` +
+      (r.renumbers.length ? `<p>换编号记录：${r.renumbers.map((x) => `${esc(x.from)} → ${esc(x.to)}（单号 ${esc(x.slipId)}）`).join('；')}</p>` : '') +
+      (r.events.length ? '<ol class="chain">' + r.events.map((e) =>
+        `<li>${fmtT(e.at)} 【${esc(e.kindLabel)}】${esc(e.from || '')} → ${esc(e.to || '')}，单号 ${esc(e.slipId)}（票面箱号 ${esc(e.boxLabel)}）${e.late ? ' <span class="tag late">补录</span>' : ''}</li>`).join('') + '</ol>' : ''),
+      r);
+  } catch (e) { renderResult(`<h2>箱位置报告</h2><p class="problem">找不到箱 ${esc(label)}</p>`, e.body); }
+};
+
+$('#btn-reset').onclick = async () => {
+  const r = await api('/api/reset', 'POST');
+  renderState(r.state);
+  renderResult('<h2>重置样例</h2><p>台账已清空并重新载入本地样例数据。</p>');
+};
+
+refresh();
+</script>
+</body>
+</html>
